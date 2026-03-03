@@ -1,19 +1,17 @@
-# Python-generated files
-__pycache__/
-
-# Virtual environments
-.venv
-
-
 # Virtual environments
 venv/
 .venv/
 env/
 ENV/
 
+# Environment variables
+.env
+
 # Python cache
 __pycache__/
 *.py[cod]
 
-# MacOS
+# macOS
 .DS_Store
+
+.idea/

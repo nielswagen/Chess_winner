@@ -9,14 +9,19 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from chess_tournament.players import Player
+from dotenv import load_dotenv
+import os
+from huggingface_hub import login
 
+load_dotenv()
+login(token=os.getenv("HF_TOKEN"))
 
 @dataclass(frozen=True)
 class SearchConfig:
-    top_k: int = 4          # prune candidates for speed
-    opp_top_k: int = 4      # prune opponent replies
-    depth: int = 2          # keep at 2 for big gain, manageable compute
-    max_legal: int = 80     # safety cap (rare positions can have many moves)
+    top_k: int = 4
+    opp_top_k: int = 4
+    depth: int = 2
+    max_legal: int = 80
 
 
 class TransformerPlayer(Player):
