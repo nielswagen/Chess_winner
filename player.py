@@ -47,7 +47,7 @@ PIECE_VALUES = {
 
 class TransformerPlayer(Player):
 
-    def __init__(self, name: str, model_id: str = "donquichot/smollm2-chess", temperature: float = 0.0):
+    def __init__(self, name: str, model_id: str = "nlpguy/smolchess", temperature: float = 0.0):
         super().__init__(name)
         self.model_id = model_id
         self.temperature = temperature
