@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: chess_tournament
+Version: 0.1.0
+Summary: Modular chess tournament framework with engines and LLM players
+Requires-Python: >=3.9
+Requires-Dist: python-chess
+Requires-Dist: requests==2.32.4
+Requires-Dist: torch
+Requires-Dist: transformers
+Requires-Dist: bitsandbytes
+Requires-Dist: huggingface-hub==1.3.0
+Requires-Dist: smolagents
+Requires-Dist: accelerate
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary

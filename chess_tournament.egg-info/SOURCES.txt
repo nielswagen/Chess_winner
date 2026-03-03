@@ -1,0 +1,11 @@
+README.md
+setup.py
+chess_tournament/__init__.py
+chess_tournament/game.py
+chess_tournament/players.py
+chess_tournament/tournament.py
+chess_tournament.egg-info/PKG-INFO
+chess_tournament.egg-info/SOURCES.txt
+chess_tournament.egg-info/dependency_links.txt
+chess_tournament.egg-info/requires.txt
+chess_tournament.egg-info/top_level.txt

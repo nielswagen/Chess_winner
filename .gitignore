@@ -3,3 +3,17 @@ __pycache__/
 
 # Virtual environments
 .venv
+
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# MacOS
+.DS_Store

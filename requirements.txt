@@ -1,0 +1,5 @@
+python-chess
+torch
+transformers
+accelerate
+chess

@@ -1,0 +1,8 @@
+python-chess
+requests==2.32.4
+torch
+transformers
+bitsandbytes
+huggingface-hub==1.3.0
+smolagents
+accelerate
