@@ -57,7 +57,10 @@ class TransformerPlayer(Player):
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = AutoModelForCausalLM.from_pretrained(self.model_id)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            self.model_id,
+            torch_dtype=torch.float16
+        )
         self.model.to(self.device)
         self.model.eval()
 
@@ -78,12 +81,16 @@ class TransformerPlayer(Player):
             result = self._best_move_by_rerank(board).uci()
             print(f"  Total get_move: {time.time() - t0:.2f}s")
             return result
-        except Exception:
+        except Exception as e:
+            print(f"  !! EXCEPTION in get_move: {type(e).__name__}: {e}")  # ADD THIS
+            import traceback
+            traceback.print_exc()  # ADD THIS
             try:
                 board = chess.Board(fen)
                 legal = list(board.legal_moves)
                 return legal[0].uci() if legal else None
-            except Exception:
+            except Exception as e2:
+                print(f"  !! fallback also failed: {e2}")
                 return None
 
     def _get_depth(self, board: chess.Board) -> int:
@@ -237,7 +244,7 @@ class TransformerPlayer(Player):
 
     def _score_moves_batch(self, prompt: str, moves: List[str]) -> List[float]:
         import time
-        time = time.time()
+        t0 = time.time()
         # Left-padding for causal LM correctness
         self.tokenizer.padding_side = "left"
 
@@ -251,7 +258,7 @@ class TransformerPlayer(Player):
         # Compute p_len from tokenizer only (no extra model call)
         p_len = len(self.tokenizer(prompt, add_special_tokens=False)["input_ids"])
 
-        with torch.no_grad():
+        with torch.inference_mode():
             logits = self.model(**inputs).logits  # (B, T, V)
 
         log_probs = torch.log_softmax(logits, dim=-1)  # (B, T, V)
