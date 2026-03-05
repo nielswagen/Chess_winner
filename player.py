@@ -57,9 +57,10 @@ class TransformerPlayer(Player):
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.tokenizer.padding_side = "left"
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_id,
-            torch_dtype=torch.float16
+            dtype=torch.float16
         )
         self.model.to(self.device)
         self.model.eval()
@@ -166,8 +167,8 @@ class TransformerPlayer(Player):
             if self._opponent_has_mate_in_1(board):
                 pos_value = float("-1e9")
             else:
-                # UPGRADE 3: leaf = material + 0.15 * neural_prior (no extra model call)
-                pos_value = self._material_eval(board) + 0.15 * opp_neural_score
+                # UPGRADE 3: leaf = material + 0.4 * neural_prior (no extra model call)
+                pos_value = self._material_eval(board) + 0.4 * opp_neural_score
             worst_for_us = min(worst_for_us, pos_value)
             board.pop()
         return worst_for_us
@@ -187,29 +188,71 @@ class TransformerPlayer(Player):
     def _material_eval(self, board: chess.Board) -> float:
         if board.is_checkmate():
             return -1e9
+
         score = 0.0
+
+        # Basic material count
         for piece_type, val in PIECE_VALUES.items():
             if piece_type == chess.KING:
                 continue
-            score += len(board.pieces(piece_type, board.turn))     * val
+            score += len(board.pieces(piece_type, board.turn)) * val
             score -= len(board.pieces(piece_type, not board.turn)) * val
+
+        # Centre control bonus
         for sq in [chess.E4, chess.D4, chess.E5, chess.D5]:
             piece = board.piece_at(sq)
             if piece:
                 score += 0.3 if piece.color == board.turn else -0.3
+
+        # Mobility bonus
         score += len(list(board.legal_moves)) * 0.05
+
+        # King safety (middlegame only)
         if len(board.piece_map()) > self.cfg.endgame_threshold:
-            our_king   = board.king(board.turn)
+            our_king = board.king(board.turn)
             their_king = board.king(not board.turn)
             if our_king is not None:
-                score -= bin(int(board.attacks_mask(our_king))).count("1")   * 0.05
+                score -= bin(int(board.attacks_mask(our_king))).count("1") * 0.05
             if their_king is not None:
                 score += bin(int(board.attacks_mask(their_king))).count("1") * 0.05
+
+        # ── IMPROVEMENT 1: Development bonuses ────────────────────────────────────
+        KNIGHT_START = {
+            chess.WHITE: {chess.G1, chess.B1},
+            chess.BLACK: {chess.G8, chess.B8},
+        }
+        BISHOP_START = {
+            chess.WHITE: {chess.F1, chess.C1},
+            chess.BLACK: {chess.F8, chess.C8},
+        }
+        for color, sign in [(board.turn, 1.0), (not board.turn, -1.0)]:
+            for sq in board.pieces(chess.KNIGHT, color):
+                if sq not in KNIGHT_START[color]:
+                    score += sign * 0.2  # knight has developed
+            for sq in board.pieces(chess.BISHOP, color):
+                if sq not in BISHOP_START[color]:
+                    score += sign * 0.2  # bishop has developed
+
+        # ── IMPROVEMENT 2: Flank pawn push penalty ────────────────────────────────
+        FLANK_SQUARES = {chess.A3, chess.A4, chess.H3, chess.H4}
+        for sq in FLANK_SQUARES:
+            piece = board.piece_at(sq)
+            if piece and piece.piece_type == chess.PAWN:
+                if piece.color == board.turn:
+                    score -= 0.15
+                else:
+                    score += 0.15  # opponent wasted a tempo — good for us
+
+        # ── IMPROVEMENT 3: Repetition penalty ────────────────────────────────────
+        if board.is_repetition(2):
+            score -= 0.5
+
         return score
 
     def _best_move_by_rerank(self, board: chess.Board) -> chess.Move:
         return self._top_moves_by_rerank(board, top_k=1)[0][0]
 
+    # ── 3. _top_moves_by_rerank ────────────────────────────────────────────────────
     def _top_moves_by_rerank(self, board: chess.Board, top_k: int) -> List[Tuple[chess.Move, float]]:
         legal = list(board.legal_moves)
         if not legal:
@@ -218,21 +261,31 @@ class TransformerPlayer(Player):
         prompt = self._make_prompt(board.fen())
         move_ucis = [mv.uci() for mv in legal]
 
-        # Score alle moves in één batch
+        # Single batched forward pass for all moves
         raw_scores = self._score_moves_batch(prompt, move_ucis)
 
-        # Bonussen toepassen
         scored = []
         for mv, score in zip(legal, raw_scores):
             bonus = 0.0
+
+            # ── IMPROVEMENT 4: Scale capture bonus by victim value ────────────────
             if board.is_capture(mv):
-                bonus += 0.5
+                victim = board.piece_at(mv.to_square)
+                if victim:
+                    bonus += PIECE_VALUES.get(victim.piece_type, 0) * 0.2
+                else:
+                    bonus += 0.1  # en passant — pawn captures pawn
+
+            # Check bonus
             board.push(mv)
             if board.is_check():
                 bonus += 0.3
             board.pop()
+
+            # Promotion bonus
             if mv.promotion is not None:
                 bonus += 0.7
+
             scored.append((mv, score + bonus))
 
         scored.sort(key=lambda x: x[1], reverse=True)
