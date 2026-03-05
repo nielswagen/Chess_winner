@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Optional, List, Tuple
@@ -62,17 +62,22 @@ class TransformerPlayer(Player):
         self.model.eval()
 
     def get_move(self, fen: str) -> Optional[str]:
+        t0 = time.time()
         try:
             board = chess.Board(fen)
             legal = list(board.legal_moves)
+            print(f"  Legal moves: {len(legal)}")
             if not legal:
                 return None
             if len(legal) > self.cfg.max_legal:
                 legal = legal[: self.cfg.max_legal]
             move_uci = self._choose(board)
             if move_uci is not None:
+                print(f"  Total get_move: {time.time() - t0:.2f}s")
                 return move_uci
-            return self._best_move_by_rerank(board).uci()
+            result = self._best_move_by_rerank(board).uci()
+            print(f"  Total get_move: {time.time() - t0:.2f}s")
+            return result
         except Exception:
             try:
                 board = chess.Board(fen)
@@ -231,6 +236,8 @@ class TransformerPlayer(Player):
 
 
     def _score_moves_batch(self, prompt: str, moves: List[str]) -> List[float]:
+        import time
+        time = time.time()
         # Left-padding for causal LM correctness
         self.tokenizer.padding_side = "left"
 
@@ -256,11 +263,9 @@ class TransformerPlayer(Player):
 
         # Mask: only score completion tokens (after prompt), ignore padding
         mask = inputs["attention_mask"][:, 1:].float()  # (B, T-1)
-
+        mask[:, : min(p_len, gathered.shape[1])] = 0.0
         # Zero out prompt tokens
         seq_len = gathered.shape[1]
-        for i in range(min(p_len, seq_len)):
-            mask[:, i] = 0.0
-
         scores = (gathered * mask).sum(dim=-1)  # (B,)
+        print(f"    batch({len(moves)} moves): {time.time() - t0:.2f}s")
         return scores.tolist()
