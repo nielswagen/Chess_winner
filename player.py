@@ -203,22 +203,39 @@ class TransformerPlayer(Player):
         if not legal:
             return []
         prompt = self._make_prompt(board.fen())
-        scored: List[Tuple[chess.Move, float]] = []
-        for mv in legal:
-            neural_score = self._score_completion(prompt, " " + mv.uci())
-            # UPGRADE 1: Forcing move bias — additive bonuses on neural log-prob
+        prompt_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"]
+        p_len = prompt_ids.shape[1]
+
+        # Tokenize all completions and pad to same length
+        completions = [" " + mv.uci() for mv in legal]
+        full_texts = [prompt + c for c in completions]
+        enc = self.tokenizer(full_texts, return_tensors="pt", padding=True).to(self.device)
+
+        with torch.no_grad():
+            logits = self.model(**enc).logits  # (N, seq_len, vocab)
+        log_probs = torch.log_softmax(logits, dim=-1)
+
+        scored = []
+        for i, mv in enumerate(legal):
+            input_ids = enc["input_ids"][i]
+            attention_mask = enc["attention_mask"][i]
+            total = 0.0
+            for idx in range(p_len, int(attention_mask.sum())):
+                token_id = int(input_ids[idx].item())
+                total += float(log_probs[i, idx - 1, token_id].item())
             bonus = 0.0
             if board.is_capture(mv):
-                bonus += 0.5        # +0.5 captures
+                bonus += 0.5
             board.push(mv)
             if board.is_check():
-                bonus += 0.3        # +0.3 gives check
-            board.pop()             # always restored — no illegal state left
+                bonus += 0.3
+            board.pop()
             if mv.promotion is not None:
-                bonus += 0.7        # +0.7 promotion
-            scored.append((mv, neural_score + bonus))
+                bonus += 0.7
+            scored.append((mv, total + bonus))
+
         scored.sort(key=lambda x: x[1], reverse=True)
-        return scored[: max(1, top_k)]
+        return scored[:max(1, top_k)]
 
     def _make_prompt(self, fen: str) -> str:
         return f"{FEW_SHOT_EXAMPLES}FEN: {fen}\nBest move (UCI):"
