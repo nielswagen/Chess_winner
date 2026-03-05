@@ -202,27 +202,16 @@ class TransformerPlayer(Player):
         legal = list(board.legal_moves)
         if not legal:
             return []
+
         prompt = self._make_prompt(board.fen())
-        prompt_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"]
-        p_len = prompt_ids.shape[1]
+        move_ucis = [mv.uci() for mv in legal]
 
-        # Tokenize all completions and pad to same length
-        completions = [" " + mv.uci() for mv in legal]
-        full_texts = [prompt + c for c in completions]
-        enc = self.tokenizer(full_texts, return_tensors="pt", padding=True).to(self.device)
+        # Score alle moves in één batch
+        raw_scores = self._score_moves_batch(prompt, move_ucis)
 
-        with torch.no_grad():
-            logits = self.model(**enc).logits  # (N, seq_len, vocab)
-        log_probs = torch.log_softmax(logits, dim=-1)
-
+        # Bonussen toepassen
         scored = []
-        for i, mv in enumerate(legal):
-            input_ids = enc["input_ids"][i]
-            attention_mask = enc["attention_mask"][i]
-            total = 0.0
-            for idx in range(p_len, int(attention_mask.sum())):
-                token_id = int(input_ids[idx].item())
-                total += float(log_probs[i, idx - 1, token_id].item())
+        for mv, score in zip(legal, raw_scores):
             bonus = 0.0
             if board.is_capture(mv):
                 bonus += 0.5
@@ -232,7 +221,7 @@ class TransformerPlayer(Player):
             board.pop()
             if mv.promotion is not None:
                 bonus += 0.7
-            scored.append((mv, total + bonus))
+            scored.append((mv, score + bonus))
 
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:max(1, top_k)]
@@ -240,18 +229,38 @@ class TransformerPlayer(Player):
     def _make_prompt(self, fen: str) -> str:
         return f"{FEW_SHOT_EXAMPLES}FEN: {fen}\nBest move (UCI):"
 
-    @lru_cache(maxsize=200_000)
-    def _score_completion(self, prompt: str, completion: str) -> float:
-        """Log-prob of completion tokens given prompt. Heavily cached."""
+
+    def _score_moves_batch(self, prompt: str, moves: List[str]) -> List[float]:
+        # Left-padding for causal LM correctness
+        self.tokenizer.padding_side = "left"
+
+        texts = [prompt + " " + m for m in moves]
+        inputs = self.tokenizer(
+            texts,
+            return_tensors="pt",
+            padding=True
+        ).to(self.device)
+
+        # Compute p_len from tokenizer only (no extra model call)
+        p_len = len(self.tokenizer(prompt, add_special_tokens=False)["input_ids"])
+
         with torch.no_grad():
-            p  = self.tokenizer(prompt,              return_tensors="pt")
-            pc = self.tokenizer(prompt + completion, return_tensors="pt")
-            p_len = int(p["input_ids"].shape[1])
-            full  = pc["input_ids"].to(self.device)
-            logits    = self.model(full).logits
-            log_probs = torch.log_softmax(logits, dim=-1)
-            total = 0.0
-            for idx in range(p_len, full.shape[1]):
-                token_id = int(full[0, idx].item())
-                total += float(log_probs[0, idx - 1, token_id].item())
-            return total
+            logits = self.model(**inputs).logits  # (B, T, V)
+
+        log_probs = torch.log_softmax(logits, dim=-1)  # (B, T, V)
+
+        # Vectorized gather instead of Python loop
+        # log_probs[:, :-1] are predictions, input_ids[:, 1:] are targets
+        token_ids = inputs["input_ids"][:, 1:].unsqueeze(-1)  # (B, T-1, 1)
+        gathered = log_probs[:, :-1].gather(-1, token_ids).squeeze(-1)  # (B, T-1)
+
+        # Mask: only score completion tokens (after prompt), ignore padding
+        mask = inputs["attention_mask"][:, 1:].float()  # (B, T-1)
+
+        # Zero out prompt tokens
+        seq_len = gathered.shape[1]
+        for i in range(min(p_len, seq_len)):
+            mask[:, i] = 0.0
+
+        scores = (gathered * mask).sum(dim=-1)  # (B,)
+        return scores.tolist()
