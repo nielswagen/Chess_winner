@@ -69,20 +69,20 @@ class TransformerPlayer(Player):
         try:
             board = chess.Board(fen)
             legal = list(board.legal_moves)
-            print(f"  Legal moves: {len(legal)}")
+            # print(f"  Legal moves: {len(legal)}")
             if not legal:
                 return None
             if len(legal) > self.cfg.max_legal:
                 legal = legal[: self.cfg.max_legal]
             move_uci = self._choose(board)
             if move_uci is not None:
-                print(f"  Total get_move: {time.time() - t0:.2f}s")
+                # print(f"  Total get_move: {time.time() - t0:.2f}s")
                 return move_uci
             result = self._best_move_by_rerank(board).uci()
-            print(f"  Total get_move: {time.time() - t0:.2f}s")
+            # print(f"  Total get_move: {time.time() - t0:.2f}s")
             return result
         except Exception as e:
-            print(f"  !! EXCEPTION in get_move: {type(e).__name__}: {e}")  # ADD THIS
+            # print(f"  !! EXCEPTION in get_move: {type(e).__name__}: {e}")  # ADD THIS
             import traceback
             traceback.print_exc()  # ADD THIS
             try:
@@ -274,5 +274,5 @@ class TransformerPlayer(Player):
         # Zero out prompt tokens
         seq_len = gathered.shape[1]
         scores = (gathered * mask).sum(dim=-1)  # (B,)
-        print(f"    batch({len(moves)} moves): {time.time() - t0:.2f}s")
+        # print(f"    batch({len(moves)} moves): {time.time() - t0:.2f}s")
         return scores.tolist()
